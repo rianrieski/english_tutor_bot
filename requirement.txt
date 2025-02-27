@@ -1,0 +1,19 @@
+# Core bot functionality
+python-telegram-bot==20.6
+python-dotenv==1.0.0
+
+# Speech processing
+SpeechRecognition==3.10.0
+pydub==0.25.1
+
+# AI services
+openai==1.3.0
+
+# Audio processing dependencies
+# NOTE: PyAudio should be installed separately, not with pip install -r requirements.txt
+# For macOS: pip install --global-option='build_ext' --global-option='-I/opt/homebrew/include' --global-option='-L/opt/homebrew/lib' pyaudio
+# For Linux: Install portaudio first (e.g., apt-get install portaudio19-dev)
+PyAudio==0.2.14  # Required for speech recognition
+
+# For production deployment
+# gunicorn==21.2.0  # If deploying to platforms like Heroku
