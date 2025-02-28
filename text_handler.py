@@ -1,12 +1,15 @@
 import os
 from dotenv import load_dotenv
 from openai import OpenAI, APIError
-import logging
 import httpx
+from logger_config import setup_logger
 
 # Load environment variables
 load_dotenv()
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+# Setup logger
+logger = setup_logger('text_handler', 'text_handler.log')
 
 def correct_text(text: str, level: str, conversation_history: list = None) -> str:
     """
@@ -69,15 +72,15 @@ def correct_text(text: str, level: str, conversation_history: list = None) -> st
         return response.choices[0].message.content
 
     except (httpx.ConnectTimeout, httpx.ReadTimeout):
-        logging.error("Timeout connecting to OpenAI API")
+        logger.error("Timeout connecting to OpenAI API")
         return "AI: I'm sorry, I'm having trouble connecting right now. Could you please try again in a moment?"
     
     except APIError as e:
-        logging.error(f"OpenAI API error: {str(e)}")
+        logger.error(f"OpenAI API error: {str(e)}")
         return "AI: I encountered an error. Please try again."
     
     except Exception as e:
-        logging.error(f"Unexpected error in correct_text: {str(e)}")
+        logger.error(f"Unexpected error in correct_text: {str(e)}")
         return "AI: I'm sorry, something went wrong. Please try again later."
 
 def generate_topic_question(topic: str, level: str) -> str:

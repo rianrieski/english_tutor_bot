@@ -2,6 +2,12 @@ import os
 import speech_recognition as sr
 from pydub import AudioSegment
 from openai import OpenAI
+from gtts import gTTS
+import tempfile
+from logger_config import setup_logger
+
+# Setup logger
+logger = setup_logger('speech_handler', 'speech_handler.log')
 
 # Initialize the OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -26,69 +32,63 @@ def transcribe_audio(audio_file_path):
         print(f"Error transcribing audio: {e}")
         return None
 
-def process_voice_message(voice_file_path, level):
-    """Process voice message: transcribe, respond conversationally, and correct if needed."""
+def process_voice_message(file_path: str, level: str) -> tuple[str, str | None]:
+    """
+    Process voice message and return both text response and path to correction audio if needed.
+    Returns: (text_response, correction_audio_path)
+    """
+    # Convert ogg to wav for speech recognition
+    audio = AudioSegment.from_ogg(file_path)
+    wav_path = tempfile.mktemp(suffix='.wav')
+    audio.export(wav_path, format="wav")
+    
+    # Initialize recognizer
+    recognizer = sr.Recognizer()
+    
     try:
-        # Convert OGG to WAV
-        wav_file_path = convert_ogg_to_wav(voice_file_path)
-        
-        # Transcribe audio
-        transcribed_text = transcribe_audio(wav_file_path)
-        
-        # Clean up WAV file
-        os.remove(wav_file_path)
-        
-        if not transcribed_text:
-            return "AI: I couldn't understand the audio. Could you try again with clearer audio?"
-        
-        # Level-specific context
-        level_context = {
-            "beginner": "Focus on basic pronunciation, simple grammar and vocabulary.",
-            "intermediate": "Correct grammar, vocabulary, and suggest natural speech patterns.",
-            "advanced": "Focus on accent reduction, fluency, and native-like expressions."
-        }
-        
-        context = level_context.get(level, level_context["intermediate"])
-        
-        # Get response and correction using AI
-        prompt = f"""
-        You are an AI English tutor having a conversation with a {level} level English learner.
-        
-        I transcribed their spoken English as: "{transcribed_text}"
-        
-        Respond in three parts:
-        1. First, confirm what you heard
-        2. Give a natural conversational response to what they said (about 1-3 sentences)
-        3. If there are any language issues, provide a corrected version
-        
-        Guidelines:
-        - {context}
-        - Only provide a correction if there are actual errors or significant improvements to be made
-        - If their English is already good, skip the correction part
-        - Keep the conversation friendly and encouraging
-        
-        Format your response as:
-        "I heard: [transcribed text]
-        
-        AI: [your conversational response]
-        
-        Corrected: [corrected version]"
-        
-        If no correction is needed, skip the "Corrected:" part.
-        """
-        
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an English language tutor having a friendly conversation while helping students improve their speaking."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=300
-        )
-        
-        return response.choices[0].message.content.strip()
-        
+        with sr.AudioFile(wav_path) as source:
+            audio_data = recognizer.record(source)
+            # Transcribe audio
+            transcribed_text = recognizer.recognize_google(audio_data)
+            
+            # Get AI response and correction
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": f"""You are a friendly English tutor helping a {level}-level learner with pronunciation and speaking.
+                    When responding:
+                    1. Acknowledge what you heard
+                    2. Provide a natural response
+                    3. If there are pronunciation or grammar issues, explain how to improve
+                    4. Include phonetic spelling for words that need correction
+                    
+                    Format your response as:
+                    I heard: [transcribed text]
+                    
+                    AI: [your response]
+                    
+                    Corrected: [if needed, provide pronunciation guidance with phonetic spelling]"""},
+                    {"role": "user", "content": transcribed_text}
+                ]
+            )
+            
+            result = response.choices[0].message.content
+            
+            # Generate correction audio if needed
+            correction_audio_path = None
+            if "Corrected:" in result:
+                correction_text = result.split("Corrected:")[1].strip()
+                if correction_text:
+                    correction_audio_path = tempfile.mktemp(suffix='.mp3')
+                    tts = gTTS(text=correction_text, lang='en', slow=True)
+                    tts.save(correction_audio_path)
+            
+            # Clean up wav file
+            os.remove(wav_path)
+            
+            return result, correction_audio_path
+            
     except Exception as e:
-        print(f"Error processing voice message: {e}")
-        return "AI: I'm sorry, I couldn't process your voice message. Could you try again?"
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
+        raise e
