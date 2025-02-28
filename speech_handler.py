@@ -33,25 +33,28 @@ def transcribe_audio(audio_file_path):
         return None
 
 def process_voice_message(file_path: str, level: str) -> tuple[str, str | None]:
-    """
-    Process voice message and return both text response and path to correction audio if needed.
-    Returns: (text_response, correction_audio_path)
-    """
-    # Convert ogg to wav for speech recognition
-    audio = AudioSegment.from_ogg(file_path)
-    wav_path = tempfile.mktemp(suffix='.wav')
-    audio.export(wav_path, format="wav")
-    
-    # Initialize recognizer
-    recognizer = sr.Recognizer()
-    
+    """Process voice message and return both text response and path to correction audio."""
     try:
+        logger.info(f"Processing voice message - file: {file_path}, level: {level}")
+        
+        # Convert ogg to wav
+        audio = AudioSegment.from_ogg(file_path)
+        wav_path = tempfile.mktemp(suffix='.wav')
+        audio.export(wav_path, format="wav")
+        logger.info("Converted audio to WAV format")
+        
+        # Initialize recognizer
+        recognizer = sr.Recognizer()
+        
         with sr.AudioFile(wav_path) as source:
             audio_data = recognizer.record(source)
             # Transcribe audio
+            logger.info("Transcribing audio with Google Speech Recognition")
             transcribed_text = recognizer.recognize_google(audio_data)
+            logger.info(f"Audio transcribed: {transcribed_text[:50]}...")
             
             # Get AI response and correction
+            logger.info("Sending transcription to OpenAI API")
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -71,6 +74,7 @@ def process_voice_message(file_path: str, level: str) -> tuple[str, str | None]:
                     {"role": "user", "content": transcribed_text}
                 ]
             )
+            logger.info("Received response from OpenAI API")
             
             result = response.choices[0].message.content
             
@@ -79,16 +83,20 @@ def process_voice_message(file_path: str, level: str) -> tuple[str, str | None]:
             if "Corrected:" in result:
                 correction_text = result.split("Corrected:")[1].strip()
                 if correction_text:
+                    logger.info("Generating correction audio with gTTS")
                     correction_audio_path = tempfile.mktemp(suffix='.mp3')
                     tts = gTTS(text=correction_text, lang='en', slow=True)
                     tts.save(correction_audio_path)
+                    logger.info("Correction audio generated")
             
             # Clean up wav file
             os.remove(wav_path)
+            logger.info("Temporary WAV file cleaned up")
             
             return result, correction_audio_path
             
     except Exception as e:
+        logger.error(f"Error processing voice message: {str(e)}")
         if os.path.exists(wav_path):
             os.remove(wav_path)
-        raise e
+        raise

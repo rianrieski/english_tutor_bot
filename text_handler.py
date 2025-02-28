@@ -20,7 +20,11 @@ def correct_text(text: str, level: str, conversation_history: list = None) -> st
         # Handle topic-specific questions
         if text.startswith("generate_topic_question_"):
             topic = text.replace("generate_topic_question_", "")
+            logger.info(f"Generating topic question for: {topic}, level: {level}")
             return generate_topic_question(topic, level)
+
+        # Log the API request
+        logger.info(f"Sending request to OpenAI API - level: {level}, history length: {len(conversation_history) if conversation_history else 0}")
 
         # Create a prompt that encourages natural, conversational corrections
         system_prompt = f"""You are a friendly English tutor having a conversation with a {level}-level English learner. 
@@ -68,6 +72,7 @@ def correct_text(text: str, level: str, conversation_history: list = None) -> st
             max_tokens=300,
             timeout=30
         )
+        logger.info("Received response from OpenAI API")
 
         return response.choices[0].message.content
 
@@ -87,23 +92,31 @@ def generate_topic_question(topic: str, level: str) -> str:
     """
     Generate a natural conversation starter for the chosen topic.
     """
-    system_prompt = f"""You are a friendly English tutor starting a conversation about {topic} with a {level}-level English learner.
-    Generate an engaging, level-appropriate question to start the conversation.
-    Make it natural and conversational, as if you're chatting with a friend.
-    
-    Format your response as:
-    AI: [your conversation-starting question]"""
+    try:
+        logger.info(f"Generating topic question - topic: {topic}, level: {level}")
+        
+        system_prompt = f"""You are a friendly English tutor starting a conversation about {topic} with a {level}-level English learner.
+        Generate an engaging, level-appropriate question to start the conversation.
+        Make it natural and conversational, as if you're chatting with a friend.
+        
+        Format your response as:
+        AI: [your conversation-starting question]"""
 
-    conversation = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Start a conversation about {topic}"}
-    ]
+        conversation = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Start a conversation about {topic}"}
+        ]
 
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=conversation,
-        temperature=0.7,
-        max_tokens=150
-    )
-
-    return response.choices[0].message.content
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=conversation,
+            temperature=0.7,
+            max_tokens=150
+        )
+        logger.info("Received topic question from OpenAI API")
+        
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        logger.error(f"Error generating topic question: {str(e)}")
+        return "AI: I'm sorry, I couldn't generate a question. Let's just start chatting!"
