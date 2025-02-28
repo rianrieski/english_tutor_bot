@@ -8,6 +8,8 @@ from logger_config import setup_logger, log_error
 from text_handler import correct_text
 from speech_handler import process_voice_message
 from database import get_user_level, set_user_level, add_message, get_conversation, clear_conversation
+import signal
+import sys
 
 # Load environment variables
 load_dotenv()
@@ -256,9 +258,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         except:
             pass
 
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    logger.info("Received shutdown signal. Stopping bot...")
+    sys.exit(0)
+
 def main() -> None:
     """Start the bot."""
     try:
+        # Register signal handlers
+        signal.signal(signal.SIGINT, signal_handler)  # Handle Ctrl+C
+        signal.signal(signal.SIGTERM, signal_handler)  # Handle termination
+
         # Log startup
         logger.info("Starting English Tutor Bot...")
         
@@ -279,11 +290,16 @@ def main() -> None:
 
         # Start the Bot
         logger.info("Bot is starting polling...")
-        application.run_polling()
+        application.run_polling(stop_signals=(signal.SIGINT, signal.SIGTERM))
         
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user (Ctrl+C)")
+    except SystemExit:
+        logger.info("Bot stopped by system signal")
     except Exception as e:
         log_error(logger, f"Failed to start bot: {str(e)}")
-        raise
+    finally:
+        logger.info("Bot shutdown complete")
 
 if __name__ == '__main__':
     main()
