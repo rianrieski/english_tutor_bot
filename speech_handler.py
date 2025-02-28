@@ -5,6 +5,7 @@ from openai import OpenAI
 from gtts import gTTS
 import tempfile
 from logger_config import setup_logger
+from utils import retry_on_timeout
 
 # Setup logger
 logger = setup_logger('speech_handler', 'speech_handler.log')
@@ -32,8 +33,10 @@ def transcribe_audio(audio_file_path):
         print(f"Error transcribing audio: {e}")
         return None
 
+@retry_on_timeout(max_retries=3)
 def process_voice_message(file_path: str, level: str) -> tuple[str, str | None]:
     """Process voice message and return both text response and path to correction audio."""
+    wav_path = None
     try:
         logger.info(f"Processing voice message - file: {file_path}, level: {level}")
         
@@ -48,10 +51,17 @@ def process_voice_message(file_path: str, level: str) -> tuple[str, str | None]:
         
         with sr.AudioFile(wav_path) as source:
             audio_data = recognizer.record(source)
-            # Transcribe audio
-            logger.info("Transcribing audio with Google Speech Recognition")
-            transcribed_text = recognizer.recognize_google(audio_data)
-            logger.info(f"Audio transcribed: {transcribed_text[:50]}...")
+            try:
+                # Transcribe audio
+                logger.info("Transcribing audio with Google Speech Recognition")
+                transcribed_text = recognizer.recognize_google(audio_data)
+                logger.info(f"Audio transcribed: {transcribed_text[:50]}...")
+            except sr.UnknownValueError:
+                logger.warning("Google Speech Recognition could not understand the audio")
+                return ("I'm sorry, I couldn't understand what you said. Could you please speak more clearly or try again in a quieter environment?", None)
+            except sr.RequestError as e:
+                logger.error(f"Could not request results from Speech Recognition service: {str(e)}")
+                return ("I'm having trouble connecting to the speech recognition service. Please try again later.", None)
             
             # Get AI response and correction
             logger.info("Sending transcription to OpenAI API")
@@ -62,15 +72,14 @@ def process_voice_message(file_path: str, level: str) -> tuple[str, str | None]:
                     When responding:
                     1. Acknowledge what you heard
                     2. Provide a natural response
-                    3. If there are pronunciation or grammar issues, explain how to improve
-                    4. Include phonetic spelling for words that need correction
+                    3. If there are pronunciation issues, provide ONLY the corrected version of what they said with phonetic spelling
                     
                     Format your response as:
                     I heard: [transcribed text]
                     
                     AI: [your response]
                     
-                    Corrected: [if needed, provide pronunciation guidance with phonetic spelling]"""},
+                    Corrected: [ONLY the user's exact words with phonetic spelling for correction, no additional explanations]"""},
                     {"role": "user", "content": transcribed_text}
                 ]
             )
@@ -97,6 +106,6 @@ def process_voice_message(file_path: str, level: str) -> tuple[str, str | None]:
             
     except Exception as e:
         logger.error(f"Error processing voice message: {str(e)}")
-        if os.path.exists(wav_path):
+        if wav_path and os.path.exists(wav_path):
             os.remove(wav_path)
         raise

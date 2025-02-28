@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from openai import OpenAI, APIError
 import httpx
 from logger_config import setup_logger
+from utils import retry_on_timeout
 
 # Load environment variables
 load_dotenv()
@@ -11,6 +12,7 @@ client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 # Setup logger
 logger = setup_logger('text_handler', 'text_handler.log')
 
+@retry_on_timeout(max_retries=3)
 def correct_text(text: str, level: str, conversation_history: list = None) -> str:
     """
     Process user text and return AI response with natural corrections if needed.
@@ -88,6 +90,7 @@ def correct_text(text: str, level: str, conversation_history: list = None) -> st
         logger.error(f"Unexpected error in correct_text: {str(e)}")
         return "AI: I'm sorry, something went wrong. Please try again later."
 
+@retry_on_timeout(max_retries=3)
 def generate_topic_question(topic: str, level: str) -> str:
     """
     Generate a natural conversation starter for the chosen topic.

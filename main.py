@@ -1,4 +1,3 @@
-import logging
 import os
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -10,6 +9,7 @@ from speech_handler import process_voice_message
 from database import get_user_level, set_user_level, add_message, get_conversation, clear_conversation
 import signal
 import sys
+from utils import retry_on_timeout
 
 # Load environment variables
 load_dotenv()
@@ -118,21 +118,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         set_user_level(user_id, level)
         await query.edit_message_text(f"Your level has been set to: {level.capitalize()}. Let's practice your English!")
 
-# Message handlers
+@retry_on_timeout(max_retries=3)
+async def send_message_with_retry(update, text):
+    """Send message with retry on timeout"""
+    await update.message.reply_text(text)
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle user text messages."""
     try:
         user_id = update.message.from_user.id
         user_text = update.message.text
-        logger.info(f"Received text message from user {user_id}: {user_text[:50]}...")  # Log first 50 chars
+        logger.info(f"Received text message from user {user_id}: {user_text[:50]}...")
         level = get_user_level(user_id)
         
         # Check if the message is a topic selection
         if user_text in TOPICS:
             logger.info(f"User {user_id} selected topic: {user_text}")
-            await update.message.reply_text(
-                f"Great! Let's talk about {user_text}. I'll start with a question.",
-                reply_markup=ReplyKeyboardRemove()
+            await send_message_with_retry(
+                update,
+                f"Great! Let's talk about {user_text}. I'll start with a question."
             )
             # Generate a topic-specific question
             topic_question = correct_text(f"generate_topic_question_{user_text}", level)
@@ -141,11 +145,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 ai_response = topic_question.split("AI:")[1].split("\n\nCorrected:")[0].strip()
                 # Save the AI's question to conversation history
                 add_message(user_id, "assistant", ai_response)
-                await update.message.reply_text(ai_response)
+                await send_message_with_retry(update, ai_response)
             return
 
         # Get conversation history before adding new message
-        conversation_history = get_conversation(user_id, limit=5)  # Get last 5 messages
+        conversation_history = get_conversation(user_id, limit=5)
         
         # Add user message to conversation history
         add_message(user_id, "user", user_text)
@@ -153,18 +157,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Get AI response and correction with conversation history
         response = correct_text(user_text, level, conversation_history)
         
-        # Split the response into AI reply and correction parts
-        ai_part = ""
-        correction_part = ""
-        
-        if "AI:" in response and "Corrected:" in response:
+        # Format and send response
+        if "AI:" in response:
             parts = response.split("\n\nCorrected:")
             ai_part = parts[0].split("AI:")[1].strip()
-            correction_part = parts[1].strip()
+            correction_part = parts[1].strip() if len(parts) > 1 else ""
             
-            # Only show correction if there are actual changes
             if "Better:" in correction_part:
-                # Format the response with the AI reply first, then the educational correction
                 formatted_response = (
                     f"{ai_part}\n\n"
                     f"💡 Let me help you improve your English:\n"
@@ -172,18 +171,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 )
             else:
                 formatted_response = ai_part
+            
+            # Add AI response to conversation history
+            add_message(user_id, "assistant", ai_part)
+            
+            await send_message_with_retry(update, formatted_response)
         else:
-            formatted_response = response
-        
-        # Add AI response to conversation history
-        add_message(user_id, "assistant", ai_part)
-        
-        await update.message.reply_text(formatted_response)
+            await send_message_with_retry(update, response)
     
     except telegram.error.TimedOut:
         log_error(logger, f"Telegram timeout error for user {user_id}")
         try:
-            await update.message.reply_text(
+            await send_message_with_retry(
+                update,
                 "I'm sorry, I experienced a timeout. Please try sending your message again."
             )
         except:
@@ -192,7 +192,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except Exception as e:
         log_error(logger, f"Error handling text from user {user_id}: {str(e)}")
         try:
-            await update.message.reply_text(
+            await send_message_with_retry(
+                update,
                 "I'm sorry, something went wrong. Please try again."
             )
         except:
